@@ -1,4 +1,9 @@
-; getSessionId() and updateDesktopsFromRegistry() was copied from https://github.com/pmb6tz/windows-desktop-switcher
+; This script use functions from VirtualDesktopAccessor.dll
+
+; Some code was copied from:
+; https://github.com/pmb6tz/windows-desktop-switcher
+; https://github.com/Ciantic/VirtualDesktopAccessor
+; https://github.com/sdias/win-10-virtual-desktop-enhancer
 
 #SingleInstance Force ; The script will Reload if launched while already running
 #NoEnv  ; Recommended for performance and compatibility with future AutoHotkey releases
@@ -9,10 +14,9 @@ SetKeyDelay, 75
 global icon_path = "virtual_desktops.png"
 Menu, Tray, Icon, %icon_path%
 
-; This script use functions from VirtualDesktopAccessor.dll
-; (you should download another version of this .dll for Windows 11, read more on github):
 hVirtualDesktopAccessor := DllCall("LoadLibrary", "Str", A_ScriptDir . "\VirtualDesktopAccessor.dll", "Ptr")
 global GoToDesktopNumberProc := DllCall("GetProcAddress", Ptr, hVirtualDesktopAccessor, AStr, "GoToDesktopNumber", "Ptr")
+global IsWindowOnCurrentVirtualDesktopProc := DllCall("GetProcAddress", "Ptr", hVirtualDesktopAccessor, "AStr", "IsWindowOnCurrentVirtualDesktop", "Ptr")
 
 global MIN_DESKTOP := 1 ; always 1
 global MAX_DESKTOP := 9 ; desktops count (will be calculated in updateDesktopsFromRegistry())
@@ -76,6 +80,56 @@ updateDesktopsFromRegistry()
     }
 }
 
+getTopWindowOnCurrentDesktop()
+{
+    ; crutch: we switch focus to the taskbar before desktop switching,
+    ; so it will be the first in windowsIDList, so we need to return second one window from windowsIDList
+    ; (not first like mentioned below)
+    WinActivate, ahk_class Shell_TrayWnd
+
+    ; https://ahk-wiki.ru/winget#:~:text=%D0%BE%D0%BA%D0%BE%D0%BD%20(%D0%BA%D0%BE%D0%BC%D0%B0%D0%BD%D0%B4%D0%B0%20DetectHiddenWindows).-,List.,-%D0%92%D0%BE%D0%B7%D0%B2%D1%80%D0%B0%D1%89%D0%B0%D0%B5%D1%82%20ID%20%D0%B2%D1%81%D0%B5%D1%85
+    ; windowsIDList contains IDs of all windows in OS (access via windowsIDList1, windowsIDList2, ...)
+    ; also they are ordered from the top to the bottom for each desktop (so we can take first ID on desired Desktop)
+    WinGet windowsIDList, list
+
+    ; windowsIDList is array length
+    Loop %windowsIDList%
+    {
+        ; %A_Index% is iterator (from 1 to %windowsIDList%)
+        windowID := windowsIDList%A_Index%
+
+        isWindowOnCurrentDesktop := DllCall(IsWindowOnCurrentVirtualDesktopProc, UInt, windowID)
+
+        ; found top window on current Desktop
+        if (isWindowOnCurrentDesktop == 1)
+            ; return next window after it (because of crutch)
+            nextIndex := A_Index + 1
+            return windowsIDList%nextIndex%
+    }
+}
+
+; WARNING! This func will work wrong if you switch desktops using Win+Tab
+; TODO: Can work wrong because of non-trivial background processes (like NVidia Share.exe)
+; maybe WinGet Transparent/ExStyle can solve this problem
+focusTopWindowOnCurrentDesktop()
+{
+    topWindowID := getTopWindowOnCurrentDesktop()
+
+    ; for debug:
+    ; WinGet name, ProcessName, ahk_id %topWindowID%
+    ; MsgBox, %name%
+
+    ; https://ahk-wiki.ru/winget#:~:text=%D0%B4%D0%BE%D0%BB%D0%B6%D0%B5%D0%BD%20%D0%B1%D1%8B%D1%82%D1%8C%20%D0%BB%D0%BE%D0%BA%D0%B0%D0%BB%D1%8C%D0%BD%D1%8B%D0%BC).-,MinMax,-.%20%D0%9E%D0%BF%D1%80%D0%B5%D0%B4%D0%B5%D0%BB%D1%8F%D0%B5%D1%82%20%D1%81%D0%BE%D1%81%D1%82%D0%BE%D1%8F%D0%BD%D0%B8%D0%B5%20%D0%BE%D0%BA%D0%BD%D0%B0
+    ; windowState:
+    ; -1 window is minimized
+    ;  1 window is maximized
+    ;  0 window is not minimized and not maximized
+    WinGet windowState, MinMax, ahk_id %topWindowID%
+
+    if windowState != -1:
+        WinActivate, ahk_id %topWindowID%
+}
+
 goToDesktop(desktopNumber)
 {
     global CURRENT_DESKTOP, PREV_DESKTOP
@@ -84,8 +138,14 @@ goToDesktop(desktopNumber)
 
     PREV_DESKTOP := CURRENT_DESKTOP
 
+    ; https://github.com/pmb6tz/windows-desktop-switcher/pull/19#:~:text=Can%20you%20explain%20this%20change%20a%20bit%3F%20I%20don%27t%20quite%20understand%20how%20this%20alone%20improves%20performance%3F
+    ; focus taskbar before switching (increase switch speed and fix some bugs, read more by the link above):
+    WinActivate, ahk_class Shell_TrayWnd
+
     ; call GoToDesktopNumberProc() from VirtualDesktopAccessor.dll:
     DllCall(GoToDesktopNumberProc, Int, desktopNumber - 1)
+
+    focusTopWindowOnCurrentDesktop()
 
     return
 }
@@ -135,6 +195,15 @@ returnToPrevDesktop()
 
 #o::returnToPrevDesktop() return
 
+; TODO: we can replace this lines with a loop
+;generateHotkeys()
+;{
+;    Loop 9
+;    {
+;        fn := goToDesktop.Bind(A_Index)
+;        Hotkey("^#Numpad" A_Index, fn, "On")
+;    }
+;}
 #1::goToDesktop(1) return 
 #2::goToDesktop(2) return 
 #3::goToDesktop(3) return 
