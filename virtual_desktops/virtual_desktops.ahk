@@ -1,11 +1,18 @@
 ; getSessionId() and updateDesktopsFromRegistry() was copied from https://github.com/pmb6tz/windows-desktop-switcher
-; This script depends on VirtualDesktopAccessor.dll (read more info in github)
 
-; The script will Reload if launched while already running
-#SingleInstance Force
+#SingleInstance Force ; The script will Reload if launched while already running
+#NoEnv  ; Recommended for performance and compatibility with future AutoHotkey releases
+#KeyHistory 0 ; Ensures user privacy when debugging is not needed
+SendMode Input  ; Recommended for new scripts due to its superior speed and reliability
+SetKeyDelay, 75
 
 global icon_path = "virtual_desktops.png"
 Menu, Tray, Icon, %icon_path%
+
+; This script use functions from VirtualDesktopAccessor.dll
+; (you should download another version of this .dll for Windows 11, read more on github):
+hVirtualDesktopAccessor := DllCall("LoadLibrary", "Str", A_ScriptDir . "\VirtualDesktopAccessor.dll", "Ptr")
+global GoToDesktopNumberProc := DllCall("GetProcAddress", Ptr, hVirtualDesktopAccessor, AStr, "GoToDesktopNumber", "Ptr")
 
 global MIN_DESKTOP := 1 ; always 1
 global MAX_DESKTOP := 9 ; desktops count (will be calculated in updateDesktopsFromRegistry())
@@ -69,85 +76,51 @@ updateDesktopsFromRegistry()
     }
 }
 
-goToRightDesktop()
+goToDesktop(desktopNumber)
 {
-    global CURRENT_DESKTOP, PREV_DESKTOP, MIN_DESKTOP, MAX_DESKTOP
+    global CURRENT_DESKTOP, PREV_DESKTOP
 
     updateDesktopsFromRegistry()
 
     PREV_DESKTOP := CURRENT_DESKTOP
 
-    if (CURRENT_DESKTOP < MAX_DESKTOP)
-    {    
-        send {Ctrl Down}{LWin Down}{Right}{LWin Up}{Ctrl Up} ; default Windows hotkey for switching virtual desktops
-        ++CURRENT_DESKTOP
-    }
+    ; call GoToDesktopNumberProc() from VirtualDesktopAccessor.dll:
+    DllCall(GoToDesktopNumberProc, Int, desktopNumber - 1)
+
+    return
+}
+
+goToRightDesktop()
+{
+    global CURRENT_DESKTOP, MIN_DESKTOP, MAX_DESKTOP
+
+    updateDesktopsFromRegistry()
+
+    if (CURRENT_DESKTOP < MAX_DESKTOP) 
+        goToDesktop(CURRENT_DESKTOP + 1)
     else if (USE_RING_BUFFER)
-    {
         goToDesktop(MIN_DESKTOP)
-    }
     
     return
 }
 
 goToLeftDesktop()
 {
-    global CURRENT_DESKTOP, PREV_DESKTOP, MIN_DESKTOP, MAX_DESKTOP
+    global CURRENT_DESKTOP, MIN_DESKTOP, MAX_DESKTOP
 
     updateDesktopsFromRegistry()
-
-    PREV_DESKTOP := CURRENT_DESKTOP
 
     if (CURRENT_DESKTOP > MIN_DESKTOP)
-    {
-        send {Ctrl Down}{LWin Down}{Left}{LWin Up}{Ctrl Up} ; default Windows hotkey for switching virtual desktops
-        --CURRENT_DESKTOP
-    }
+        goToDesktop(CURRENT_DESKTOP - 1)
     else if (USE_RING_BUFFER)
-    {
         goToDesktop(MAX_DESKTOP)
-    }
     
     return
 }
 
-goToDesktop(desktopNumber)
-{
-    global CURRENT_DESKTOP, PREV_DESKTOP, MIN_DESKTOP, MAX_DESKTOP
-
-    updateDesktopsFromRegistry()
-
-    ; save it here, because goToRightDesktop() and goToLeftDesktop() will change both: CURRENT_DESKTOP and PREV_DESKTOP
-    prev := CURRENT_DESKTOP
-
-    isMoveForward := (desktopNumber > CURRENT_DESKTOP)
-    steps := abs(desktopNumber - CURRENT_DESKTOP)
-
-    ; TODO: is there a way to move to desktop N immediately, without calling goToRightDesktop()/goToLeftDesktop() in a loop?
-    while (steps)
-    {
-        if (isMoveForward)
-        {
-            goToRightDesktop()
-        }
-        else
-        {
-            goToLeftDesktop()
-        }
-
-        --steps
-    }
-
-    PREV_DESKTOP := prev
-    
-    return
-}
-
-; switching before last two desktops
-; (for example, if we switched from desktop 2 to 5, then it will return to 2)
 ; WARNING! This func will work wrong if you switch desktops using Win+Tab,
 ; because it will not be able to get the PREV_DESKTOP value
-goToPrevDesktop()
+returnToPrevDesktop()
 {
     global PREV_DESKTOP
 
@@ -160,7 +133,7 @@ goToPrevDesktop()
 #n::goToRightDesktop() return
 #p::goToLeftDesktop() return
 
-#o::goToPrevDesktop() return
+#o::returnToPrevDesktop() return
 
 #1::goToDesktop(1) return 
 #2::goToDesktop(2) return 
@@ -171,4 +144,3 @@ goToPrevDesktop()
 #7::goToDesktop(7) return 
 #8::goToDesktop(8) return 
 #9::goToDesktop(9) return
-; add more if you need to support more than 9 desktops
